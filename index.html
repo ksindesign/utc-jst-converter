@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>UTC ⇔ JST 変換</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1 data-i18n="title">UTC ⇔ JST 変換</h1>
+    <select id="lang" aria-label="Language">
+      <option value="ja">日本語</option>
+      <option value="en">English</option>
+    </select>
+  </header>
+
+  <main>
+    <div class="card">
+      <div class="field">
+        <label for="utc">UTC <small data-i18n="utcSub">協定世界時</small></label>
+        <div class="row">
+          <input id="utc" type="text" autocomplete="off" spellcheck="false" inputmode="text">
+          <button type="button" data-copy="utc" data-i18n="copy">コピー</button>
+        </div>
+        <div class="msg" id="utc-msg" aria-live="polite"></div>
+      </div>
+
+      <div class="swap" aria-hidden="true">⇅</div>
+
+      <div class="field">
+        <label for="jst">JST <small data-i18n="jstSub">日本標準時 (UTC+9)</small></label>
+        <div class="row">
+          <input id="jst" type="text" autocomplete="off" spellcheck="false" inputmode="text">
+          <button type="button" data-copy="jst" data-i18n="copy">コピー</button>
+        </div>
+        <div class="msg" id="jst-msg" aria-live="polite"></div>
+      </div>
+
+      <div class="actions">
+        <button type="button" class="primary" id="now" data-i18n="now">現在時刻</button>
+        <span class="unix">Unix: <span id="unix">—</span></span>
+        <button type="button" data-copy="unix" data-i18n="copy">コピー</button>
+      </div>
+    </div>
+
+    <div class="help">
+      <span data-i18n="helpTitle">どちらの欄に入力しても、もう片方が自動で変換されます。対応形式:</span>
+      <ul>
+        <li><code>2026-09-29 01:45:02</code> / <code>2026/9/29 1:45</code></li>
+        <li><code>2026-09-29T01:45:02Z</code>, <code>2026-09-29T10:45:02+09:00</code> (ISO 8601)</li>
+        <li><code>1790000000</code> <span data-i18n="unixSec">(Unix 秒)</span>, <code>1790000000123</code> <span data-i18n="unixMs">(Unix ミリ秒)</span></li>
+      </ul>
+    </div>
+  </main>
+
+  <script src="converter.js"></script>
+  <script>
+    (function () {
+      'use strict';
+      var C = window.TimeConverter;
+
+      var I18N = {
+        ja: {
+          title: 'UTC ⇔ JST 変換',
+          utcSub: '協定世界時',
+          jstSub: '日本標準時 (UTC+9)',
+          copy: 'コピー',
+          copied: 'コピーしました',
+          now: '現在時刻',
+          invalid: '日時として解釈できません',
+          helpTitle: 'どちらの欄に入力しても、もう片方が自動で変換されます。対応形式:',
+          unixSec: '(Unix 秒)',
+          unixMs: '(Unix ミリ秒)'
+        },
+        en: {
+          title: 'UTC ⇔ JST Converter',
+          utcSub: 'Coordinated Universal Time',
+          jstSub: 'Japan Standard Time (UTC+9)',
+          copy: 'Copy',
+          copied: 'Copied',
+          now: 'Now',
+          invalid: 'Not a valid date/time',
+          helpTitle: 'Type in either field and the other converts automatically. Supported formats:',
+          unixSec: '(Unix seconds)',
+          unixMs: '(Unix milliseconds)'
+        }
+      };
+
+      var lang = 'ja';
+      var fields = {
+        utc: { input: document.getElementById('utc'), msg: document.getElementById('utc-msg'), parse: C.parseUtc, format: C.formatUtc },
+        jst: { input: document.getElementById('jst'), msg: document.getElementById('jst-msg'), parse: C.parseJst, format: C.formatJst }
+      };
+      var unixEl = document.getElementById('unix');
+      var errors = { utc: false, jst: false };
+
+      function t(key) { return I18N[lang][key]; }
+
+      function applyLang(next) {
+        lang = I18N[next] ? next : 'ja';
+        document.documentElement.lang = lang;
+        document.title = t('title');
+        document.getElementById('lang').value = lang;
+        document.querySelectorAll('[data-i18n]').forEach(function (el) {
+          el.textContent = t(el.getAttribute('data-i18n'));
+        });
+        Object.keys(fields).forEach(function (k) { setError(k, errors[k]); });
+        try { localStorage.setItem('utcjst.lang', lang); } catch (e) { /* ignore */ }
+      }
+
+      function setError(key, isError) {
+        errors[key] = isError;
+        var f = fields[key];
+        f.input.setAttribute('aria-invalid', isError ? 'true' : 'false');
+        f.msg.className = 'msg' + (isError ? ' error' : '');
+        f.msg.textContent = isError ? t('invalid') : '';
+      }
+
+      // epoch をすべての欄へ反映（except は入力中の欄）/ render epoch to all fields except the one being edited
+      function render(epoch, except) {
+        Object.keys(fields).forEach(function (k) {
+          if (k !== except) fields[k].input.value = fields[k].format(epoch);
+          setError(k, false);
+        });
+        unixEl.textContent = String(Math.floor(epoch / 1000));
+      }
+
+      Object.keys(fields).forEach(function (key) {
+        fields[key].input.addEventListener('input', function () {
+          var epoch = fields[key].parse(this.value);
+          if (epoch === null || isNaN(epoch)) {
+            setError(key, this.value.trim() !== '');
+            return;
+          }
+          render(epoch, key);
+        });
+        // フォーカスが外れたら入力欄を正規化 / normalize the field on blur
+        fields[key].input.addEventListener('blur', function () {
+          var epoch = fields[key].parse(this.value);
+          if (epoch !== null && !isNaN(epoch)) this.value = fields[key].format(epoch);
+        });
+      });
+
+      document.getElementById('now').addEventListener('click', function () {
+        render(Date.now() - (Date.now() % 1000));
+      });
+
+      document.querySelectorAll('[data-copy]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var target = btn.getAttribute('data-copy');
+          var text = target === 'unix' ? unixEl.textContent : fields[target].input.value;
+          var done = function () {
+            btn.textContent = t('copied');
+            setTimeout(function () { btn.textContent = t('copy'); }, 1200);
+          };
+          if (navigator.clipboard && window.isSecureContext) {
+            navigator.clipboard.writeText(text).then(done, function () { fallbackCopy(text); done(); });
+          } else {
+            fallbackCopy(text);
+            done();
+          }
+        });
+      });
+
+      // file:// など clipboard API が使えない環境用 / fallback for file:// where the clipboard API may be unavailable
+      function fallbackCopy(text) {
+        var ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        try { document.execCommand('copy'); } catch (e) { /* ignore */ }
+        document.body.removeChild(ta);
+      }
+
+      document.getElementById('lang').addEventListener('change', function () { applyLang(this.value); });
+
+      var saved = null;
+      try { saved = localStorage.getItem('utcjst.lang'); } catch (e) { /* ignore */ }
+      applyLang(saved || (/^ja\b/i.test(navigator.language || '') ? 'ja' : 'en'));
+      render(Date.now() - (Date.now() % 1000));
+    })();
+  </script>
+</body>
+</html>
